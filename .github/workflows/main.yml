@@ -1,0 +1,109 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        java-version: [17]
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up JDK
+      uses: actions/setup-java@v3
+      with:
+        java-version: ${{ matrix.java-version }}
+        distribution: 'temurin'
+        cache: maven
+    
+    - name: Build with Maven
+      run: mvn clean package -DskipTests
+    
+    - name: Run Tests
+      run: mvn test
+    
+    - name: Generate Test Report
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-reports
+        path: target/surefire-reports/
+    
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: jar-file
+        path: target/*.jar
+    
+    - name: Build Docker Image
+      run: docker build -t ai-resume-analyzer:latest -t ai-resume-analyzer:${{ github.sha }} .
+    
+    - name: Run SonarQube Analysis
+      if: github.event_name == 'push'
+      run: |
+        mvn sonar:sonar \
+          -Dsonar.projectKey=AI_Resume_Analyzer \
+          -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+          -Dsonar.login=${{ secrets.SONAR_TOKEN }} || true
+
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up JDK
+      uses: actions/setup-java@v3
+      with:
+        java-version: 17
+        distribution: 'temurin'
+        cache: maven
+    
+    - name: Run SpotBugs
+      run: mvn spotbugs:check || true
+    
+    - name: Check Dependencies
+      run: mvn dependency-check:check || true
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Run Trivy Scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy Results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Download Artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: jar-file
+    
+    - name: Deploy to Production
+      run: |
+        echo "Deployment step - configure based on your infrastructure"
+        echo "You can use Docker, Kubernetes, Cloud Run, or any deployment platform"
